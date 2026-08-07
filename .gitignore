@@ -1,0 +1,12 @@
+.venv/
+
+# Ignore generated datasets
+data/raw/*
+data/processed/*
+
+# Keep folder structure
+!data/raw/README.md
+!data/processed/README.md
+
+models/*
+!models/README.md
