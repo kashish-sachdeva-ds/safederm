@@ -13,6 +13,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = PROJECT_ROOT / "data"
 RAW_DATA_DIR = DATA_DIR / "raw"
 PROCESSED_DATA_DIR = DATA_DIR / "processed"
+MODELS_DIR = PROJECT_ROOT / "models"
 
 # Kaggle dataset slug -- used by the download step
 KAGGLE_DATASET = "kmader/skin-cancer-mnist-ham10000"
@@ -25,6 +26,9 @@ METADATA_PATH = RAW_DATA_DIR / "HAM10000_metadata.csv"
 TRAIN_SPLIT_PATH = PROCESSED_DATA_DIR / "train_split.csv"
 VAL_SPLIT_PATH = PROCESSED_DATA_DIR / "val_split.csv"
 TEST_SPLIT_PATH = PROCESSED_DATA_DIR / "test_split.csv"
+
+# Model checkpoints
+BASELINE_MODEL_PATH = MODELS_DIR / "baseline_resnet50.pt"
 
 # Sanity-check constants used by 01_data_extraction.ipynb
 EXPECTED_IMAGE_COUNT = 10015
