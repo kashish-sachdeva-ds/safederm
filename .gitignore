@@ -10,3 +10,6 @@ data/processed/*
 
 models/*
 !models/README.md
+
+__pycache__/
+*.py[cod]
