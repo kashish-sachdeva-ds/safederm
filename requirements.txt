@@ -4,6 +4,5 @@ matplotlib==3.11.1
 seaborn==0.13.2
 scikit-learn==1.9.0
 scipy==1.18.0
-tensorflow==2.21.0
-torch==2.13.0
-torchvision==0.28.0
+torch==2.13.0+cu130
+torchvision==0.28.0+cu130
