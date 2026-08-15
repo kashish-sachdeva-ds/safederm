@@ -1,3 +1,13 @@
+# Self-sufficient on its own: `pip install -r api/requirements.txt` from
+# inside api/ (or the Docker build, which installs this after the root
+# requirements.txt) both work. Previously this file only listed
+# fastapi/uvicorn/python-multipart even though api/main.py imports torch,
+# torchvision, pandas, and Pillow via src.model / src.transforms /
+# src.dataset -- it only worked because the Dockerfile happened to also
+# install the root requirements.txt first. Deploying api/ standalone
+# anywhere else broke on import.
+-r ../requirements.txt
+
 fastapi
 uvicorn
 python-multipart

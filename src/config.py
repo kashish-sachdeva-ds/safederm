@@ -29,6 +29,18 @@ TEST_SPLIT_PATH = PROCESSED_DATA_DIR / "test_split.csv"
 
 # Model checkpoints
 BASELINE_MODEL_PATH = MODELS_DIR / "baseline_resnet50.pt"
+CHAMPION_MODEL_PATH = MODELS_DIR / "champion_transformer.pt"
+
+# Calibration artifact (temperature + tier thresholds), written by
+# 08_calibration_conformal.ipynb, read by api/main.py at startup.
+CALIBRATION_ARTIFACT_PATH = MODELS_DIR / "calibration.json"
+
+# Small metrics summaries (val_loss/val_accuracy/malignant_recall), written
+# alongside each checkpoint so 07_champion_model.ipynb can load 06's result
+# and print a direct comparison table instead of requiring someone to
+# eyeball two separate notebooks' printed output.
+BASELINE_METRICS_PATH = MODELS_DIR / "baseline_metrics.json"
+CHAMPION_METRICS_PATH = MODELS_DIR / "champion_metrics.json"
 
 # Sanity-check constants used by 01_data_extraction.ipynb
 EXPECTED_IMAGE_COUNT = 10015
