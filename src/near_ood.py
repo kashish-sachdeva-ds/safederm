@@ -50,7 +50,7 @@ DEFAULT_K = 5
 # NOTE: a threshold tuned on the baseline's embedding space does not
 # transfer to the champion model either — its embeddings live in a
 # different space entirely. Re-tune per architecture, not just per checkpoint.
-DEFAULT_DISTANCE_THRESHOLD = None  # fill in after running the notebook
+DEFAULT_DISTANCE_THRESHOLD = 0.90
 
 EmbeddingFn = Callable[[nn.Module, torch.Tensor], torch.Tensor]
 
