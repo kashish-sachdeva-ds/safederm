@@ -13,3 +13,9 @@ models/*
 
 __pycache__/
 *.py[cod]
+
+# Project Brain
+BRAIN.md
+
+# Guides
+fastapi_guide.md

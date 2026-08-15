@@ -9,3 +9,11 @@ requires-python = ">=3.10"
 
 [tool.setuptools.packages.find]
 include = ["src*"]
+
+[tool.pyright]
+extraPaths = ["."]
+venvPath = "."
+venv = ".venv"
+executionEnvironments = [
+  { root = ".", extraPaths = ["."] }
+]

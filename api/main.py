@@ -15,6 +15,7 @@ import os
 import threading
 from contextlib import asynccontextmanager
 from typing import Dict, Optional
+from pathlib import Path
 
 import torch
 import torch.nn as nn
@@ -25,10 +26,12 @@ from PIL import Image
 from pydantic import BaseModel
 
 from src.calibration import CalibrationArtifact, assign_tier, mc_dropout_predict
-from src.config import BASELINE_MODEL_PATH, CALIBRATION_ARTIFACT_PATH, CHAMPION_MODEL_PATH
+from src.config import BASELINE_MODEL_PATH, CALIBRATION_ARTIFACT_PATH, CHAMPION_MODEL_PATH, GATEWAY_THRESHOLD
 from src.labels import ALL_CLASSES, risk_group
 from src.model import build_baseline_model, build_champion_model
 from src.transforms import get_eval_transforms
+from src.gateway import load_gateway_model, verify_image_is_skin
+from src.near_ood import load_feature_bank, verify_in_distribution, DEFAULT_DISTANCE_THRESHOLD
 
 logging.basicConfig(
     level=logging.INFO,
@@ -53,12 +56,6 @@ if MODEL_VARIANT not in MODEL_REGISTRY:
 
 MAX_FILE_SIZE = 5 * 1024 * 1024  # 5MB
 
-# No cookies/sessions/auth anywhere in this API -- allow_credentials has
-# nothing to guard, so it stays False (the original True + allow_origins=["*"]
-# combination let any origin make "credentialed" requests, since browsers
-# reject a literal wildcard alongside credentials and Starlette works around
-# that by reflecting the request's Origin header instead). allow_origins is
-# configurable per-environment instead of "*"; defaults cover local frontend dev.
 ALLOWED_ORIGINS = [
     origin.strip()
     for origin in os.environ.get(
@@ -77,14 +74,9 @@ transform = None
 checkpoint_loaded = False
 model_supports_mc_dropout = False
 calibration: Optional[CalibrationArtifact] = None
+gw_model = None
+feature_bank = None
 
-# The model's .training flag gets toggled per-request by enable_mc_dropout()
-# (see src/calibration.py). One shared model instance means two concurrent
-# requests dispatched to different threadpool threads could race on that
-# flag. Serializing inference with a lock is the simple, correct fix at
-# this stage -- it trades away concurrent *throughput* for correctness.
-# A real scale-up (multiple model replicas / a dedicated inference
-# service) is a later problem, not one to leave a race condition for now.
 _inference_lock = threading.Lock()
 
 
@@ -94,8 +86,8 @@ def _model_has_dropout(m: nn.Module) -> bool:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Startup/shutdown hook. Replaces the deprecated @app.on_event("startup")."""
     global model, transform, checkpoint_loaded, model_supports_mc_dropout, calibration
+    global gw_model, feature_bank
 
     entry = MODEL_REGISTRY[MODEL_VARIANT]
     model = entry["build_fn"]()
@@ -140,6 +132,12 @@ async def lifespan(app: FastAPI):
             calibration.temperature, calibration.entropy_threshold, calibration.confidence_threshold,
         )
 
+    logger.info("Loading Input Safety Gateway model...")
+    gw_model = load_gateway_model(device)
+
+    logger.info("Loading Feature Bank (Gateway 2)...")
+    feature_bank = load_feature_bank(Path("models"), str(device))
+
     yield
     # No shutdown work needed -- nothing external held open (no DB/file handles).
 
@@ -177,13 +175,10 @@ class PredictionResponse(BaseModel):
 
 class HealthResponse(BaseModel):
     status: str
-    model_loaded: bool        # model object constructed successfully
-    checkpoint_loaded: bool   # trained weights actually loaded -- NOT the same as
-                               # model_loaded: a model builds fine with random
-                               # weights even if the checkpoint file is missing
+    model_loaded: bool
+    checkpoint_loaded: bool
     model_variant: str
     calibration_loaded: bool
-
 
 # ---------------------------------------------------------------------------
 # Inference
@@ -191,12 +186,6 @@ class HealthResponse(BaseModel):
 
 
 def _run_inference(tensor: torch.Tensor) -> dict:
-    """The actual (synchronous, CPU-bound) forward-pass work, called via
-    run_in_threadpool from the /predict handler so MC Dropout's ~20
-    forward passes don't block the event loop for other concurrent
-    requests -- the original single-pass version had this problem too,
-    just 20x less of it.
-    """
     with _inference_lock:
         if calibration is not None and model_supports_mc_dropout:
             mean_probs, entropy = mc_dropout_predict(
@@ -237,9 +226,9 @@ def _run_inference(tensor: torch.Tensor) -> dict:
 
 @app.post("/predict", response_model=PredictionResponse)
 async def predict(file: UploadFile = File(...)):
-    if model is None or transform is None:
-        logger.error("Attempted prediction but model is not loaded.")
-        raise HTTPException(status_code=500, detail="Model not loaded.")
+    if model is None or transform is None or gw_model is None or feature_bank is None:
+        logger.error("Attempted prediction but models are not loaded.")
+        raise HTTPException(status_code=500, detail="Models not loaded.")
 
     if not file.content_type or not file.content_type.startswith("image/"):
         logger.warning("Invalid file type uploaded: %s", file.content_type)
@@ -252,15 +241,40 @@ async def predict(file: UploadFile = File(...)):
 
     try:
         image = Image.open(io.BytesIO(contents)).convert("RGB")
+        
+        # Gateway Check 1 (Far-OOD): Is it skin?
+        is_skin, skin_score = verify_image_is_skin(
+            image, 
+            gateway=gw_model, 
+            threshold=GATEWAY_THRESHOLD,
+        )
+        if not is_skin:
+            logger.warning("Gateway 1 check failed. Image is likely out-of-distribution (non-skin).")
+            raise HTTPException(
+                status_code=400, 
+                detail="Invalid image detected. Please upload a clear medical photograph of human skin."
+            )
+
         tensor = transform(image).unsqueeze(0).to(device)
+        
+        # Gateway Check 2 (Near-OOD): Is it dermoscopy quality?
+        is_in_dist, distance = verify_in_distribution(
+            tensor,
+            model,
+            feature_bank,
+            threshold=DEFAULT_DISTANCE_THRESHOLD
+        )
+        if not is_in_dist:
+            logger.warning(f"Gateway 2 check failed. Image is skin but not in-distribution (distance: {distance:.3f}).")
+            raise HTTPException(
+                status_code=400,
+                detail=f"Image detected as skin but does not match clinical quality (e.g. poor lighting, non-dermoscopic). Distance: {distance:.3f}. Please upload a clear dermoscopy image."
+            )
+
         return await run_in_threadpool(_run_inference, tensor)
     except HTTPException:
         raise
     except Exception:
-        # Full traceback goes to the server log; the client gets a message
-        # that can't leak internals (stack traces, file paths, library
-        # versions). The original version returned str(e) straight to the
-        # caller.
         logger.exception("Unexpected error while processing a prediction request")
         raise HTTPException(
             status_code=500,

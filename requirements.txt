@@ -7,3 +7,5 @@ scipy==1.18.0
 torch==2.13.0+cu130
 torchvision==0.28.0+cu130
 fastapi==0.141.1
+open_clip_torch
+transformers
