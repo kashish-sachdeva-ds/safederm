@@ -7,12 +7,25 @@ that fool a generic vision-language model (wood grain, glitter/confetti
 textures, wrong lighting/zoom) but clearly aren't in-distribution for
 a dermoscopy classifier.
 
-No new model is trained. We reuse the already-trained clinical model
-(baseline now, champion later — swap the checkpoint, nothing else
-changes) and read out its penultimate-layer embedding via a forward
-hook on `model.avgpool`. That assumes a standard torchvision ResNet
-(avgpool -> flatten -> fc) — if build_baseline_model() wraps things
-differently, adjust `_get_embedding` accordingly.
+No new model is trained. We reuse whatever clinical model is currently
+deployed and read out an embedding from it — but HOW to read that
+embedding is architecture-specific and does NOT survive a checkpoint
+swap for free. The baseline (plain torchvision ResNet-50) exposes a
+clean `avgpool` module. The champion model feeds the raw feature map
+straight into a transformer head with no pooling step, so `avgpool`
+does not exist on it — calling this with an unadapted extractor raises
+AttributeError on the champion model. Confirmed directly (see
+SAFEDERM_MODEL_VARIANT=champion test, Aug 2026); an earlier version of
+this docstring claimed "swap the checkpoint, nothing else changes",
+which was wrong and has been removed.
+
+Fix: `_get_embedding` no longer hardcodes `avgpool`. Every caller must
+pass an `embedding_fn(model, x) -> Tensor` appropriate to that model's
+architecture. `resnet_avgpool_embedding_fn` below covers the baseline.
+For the champion model, someone who knows its transformer head (mean-
+pool over the sequence output? CLS token? a dedicated projection head?)
+needs to write the equivalent extractor and pass it in explicitly — do
+not assume one architecture's extractor works on another's model.
 
 Method: k-NN distance in embedding space (Sun et al., "Out-of-Distribution
 Detection with Deep Nearest Neighbors", ICML 2022) — non-parametric, no
@@ -23,6 +36,7 @@ a plain in-memory tensor + torch.cdist is enough — no FAISS needed.
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 import torch
 import torch.nn as nn
@@ -33,7 +47,12 @@ DEFAULT_K = 5
 # Starting point only — tune against real in-distribution vs known-OOD
 # samples (wood grain, glitter, etc.) the same way src/gateway.py's
 # threshold gets tuned in notebooks/gateway_threshold_tuning.ipynb.
-DEFAULT_DISTANCE_THRESHOLD = 0.90  # fill in after running the notebook
+# NOTE: a threshold tuned on the baseline's embedding space does not
+# transfer to the champion model either — its embeddings live in a
+# different space entirely. Re-tune per architecture, not just per checkpoint.
+DEFAULT_DISTANCE_THRESHOLD = None  # fill in after running the notebook
+
+EmbeddingFn = Callable[[nn.Module, torch.Tensor], torch.Tensor]
 
 
 @dataclass
@@ -42,9 +61,13 @@ class FeatureBank:
     device: str
 
 
-def _get_embedding(model: nn.Module, x: torch.Tensor) -> torch.Tensor:
-    """Pull the penultimate-layer (pre-fc) embedding via a forward hook.
-    Assumes a torchvision-style ResNet with a `model.avgpool` module."""
+def resnet_avgpool_embedding_fn(model: nn.Module, x: torch.Tensor) -> torch.Tensor:
+    """Embedding extractor for the BASELINE model only — a standard
+    torchvision ResNet-50 (avgpool -> flatten -> fc). Pulls the
+    pre-fc feature via a forward hook on `model.avgpool`.
+
+    Do NOT pass this for the champion model — it does not have an
+    `avgpool` module and this will raise AttributeError."""
     captured = {}
 
     def hook(_module, _input, output):
@@ -59,25 +82,62 @@ def _get_embedding(model: nn.Module, x: torch.Tensor) -> torch.Tensor:
     return emb / emb.norm(dim=-1, keepdim=True)  # L2-normalize
 
 
+def _get_embedding(model: nn.Module, x: torch.Tensor, embedding_fn: EmbeddingFn) -> torch.Tensor:
+    """Thin dispatch to the caller-supplied, architecture-specific extractor.
+    Deliberately has no default — a silent default is exactly what caused
+    the champion-model crash this function is now guarding against."""
+    return embedding_fn(model, x)
+
+
+def champion_embedding_fn(model: nn.Module, x: torch.Tensor) -> torch.Tensor:
+    """NOT IMPLEMENTED — placeholder so the missing piece is visible in
+    code rather than buried in a comment.
+
+    Champion feeds the raw CNN feature map into a transformer head with
+    no pooling step, so there is no single `avgpool`-equivalent to hook.
+    Whoever owns ADR-002 (the champion architecture) needs to decide what
+    counts as "the embedding" here — candidates: mean-pool the transformer's
+    output sequence, take a CLS-token-style summary vector, or a dedicated
+    pre-classification projection layer. Whichever it is, wire it up the
+    same way resnet_avgpool_embedding_fn does above, then re-run
+    notebooks/near_ood_feature_bank.ipynb against the champion checkpoint
+    to rebuild the feature bank and re-tune the distance threshold —
+    neither carries over from the baseline."""
+    raise NotImplementedError(
+        "champion_embedding_fn is not implemented yet — see docstring. "
+        "Do not fall back to resnet_avgpool_embedding_fn for the champion "
+        "model; it will raise AttributeError (no avgpool module) or, worse, "
+        "silently succeed on some other unrelated attribute and produce "
+        "meaningless distances."
+    )
+
+
 @torch.no_grad()
 def build_feature_bank(
     model: nn.Module,
     train_loader: DataLoader,
     device: str,
+    embedding_fn: EmbeddingFn,
 ) -> FeatureBank:
     """Run every training image through the model once and collect its
     embedding. This is the 'index' that new images get compared against
     at inference time — not training, just a forward pass over data
-    we already have."""
+    we already have.
+
+    embedding_fn is required, not defaulted — pass
+    resnet_avgpool_embedding_fn for the baseline, or a champion-specific
+    extractor once one exists. A feature bank built with the wrong
+    extractor for the wrong model will not error loudly; it will just
+    produce meaningless distances, which is worse than a crash."""
     model.eval().to(device)
     all_embeddings = []
 
     for images, _labels in train_loader:
         images = images.to(device)
-        emb = _get_embedding(model, images)
+        emb = _get_embedding(model, images, embedding_fn)
         all_embeddings.append(emb.cpu())
 
-    embeddings = torch.cat(all_embeddings, dim=0).to(device)
+    embeddings = torch.cat(all_embeddings, dim=0)
     return FeatureBank(embeddings=embeddings, device=device)
 
 
@@ -98,16 +158,21 @@ def knn_distance(
     image_tensor: torch.Tensor,
     model: nn.Module,
     bank: FeatureBank,
+    embedding_fn: EmbeddingFn,
     k: int = DEFAULT_K,
 ) -> float:
     """Distance from one preprocessed image (already batched, shape (1,C,H,W))
     to its k-th nearest neighbor in the training feature bank. Higher = more
-    likely near-OOD."""
+    likely near-OOD.
+
+    embedding_fn MUST be the same one used to build `bank` — mixing
+    extractors gives a distance number that looks valid but means nothing,
+    since it's comparing embeddings from two different spaces."""
     model.eval().to(bank.device)
     image_tensor = image_tensor.to(bank.device)
 
-    query_emb = _get_embedding(model, image_tensor)  # (1, D)
-    dists = torch.cdist(query_emb, bank.embeddings.to(query_emb.device))  # (1, N)
+    query_emb = _get_embedding(model, image_tensor, embedding_fn)  # (1, D)
+    dists = torch.cdist(query_emb, bank.embeddings)  # (1, N)
     kth_dist = dists.topk(k, largest=False).values[0, -1]
     return kth_dist.item()
 
@@ -117,10 +182,11 @@ def verify_in_distribution(
     model: nn.Module,
     bank: FeatureBank,
     threshold: float,
+    embedding_fn: EmbeddingFn,
     k: int = DEFAULT_K,
 ) -> tuple[bool, float]:
     """Returns (is_in_distribution, distance). Mirrors
     src/gateway.py's verify_image_is_skin() return shape so the API
     route can call both gates the same way."""
-    distance = knn_distance(image_tensor, model, bank, k=k)
+    distance = knn_distance(image_tensor, model, bank, embedding_fn, k=k)
     return distance <= threshold, distance

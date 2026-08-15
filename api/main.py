@@ -31,7 +31,7 @@ from src.labels import ALL_CLASSES, risk_group
 from src.model import build_baseline_model, build_champion_model
 from src.transforms import get_eval_transforms
 from src.gateway import load_gateway_model, verify_image_is_skin
-from src.near_ood import load_feature_bank, verify_in_distribution, DEFAULT_DISTANCE_THRESHOLD
+from src.near_ood import load_feature_bank, verify_in_distribution, DEFAULT_DISTANCE_THRESHOLD, resnet_avgpool_embedding_fn, champion_embedding_fn
 
 logging.basicConfig(
     level=logging.INFO,
@@ -258,11 +258,13 @@ async def predict(file: UploadFile = File(...)):
         tensor = transform(image).unsqueeze(0).to(device)
         
         # Gateway Check 2 (Near-OOD): Is it dermoscopy quality?
+        emb_fn = resnet_avgpool_embedding_fn if MODEL_VARIANT == "baseline" else champion_embedding_fn
         is_in_dist, distance = verify_in_distribution(
             tensor,
             model,
             feature_bank,
-            threshold=DEFAULT_DISTANCE_THRESHOLD
+            threshold=DEFAULT_DISTANCE_THRESHOLD,
+            embedding_fn=emb_fn
         )
         if not is_in_dist:
             logger.warning(f"Gateway 2 check failed. Image is skin but not in-distribution (distance: {distance:.3f}).")
