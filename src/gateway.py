@@ -45,8 +45,8 @@ DEFAULT_SKIN_THRESHOLD = 0.5
 @dataclass
 class GatewayModel:
     model: torch.nn.Module
-    preprocess: typing.Callable
-    tokenizer: typing.Callable
+    preprocess: typing.Any
+    tokenizer: typing.Any
     device: str
 
 

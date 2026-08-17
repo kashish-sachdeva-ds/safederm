@@ -28,7 +28,7 @@ from __future__ import annotations
 import logging
 import random
 from pathlib import Path
-from typing import Optional
+from typing import Dict, Any, Optional
 
 import numpy as np
 import pandas as pd
@@ -73,7 +73,7 @@ def compute_class_weights(split_csv_path) -> torch.Tensor:
 
     weights = torch.zeros(len(ALL_CLASSES))
     for cls, idx in CLASS_TO_IDX.items():
-        class_count = int(counts.get(cls, 0))
+        class_count = int(counts.get(cls, 0))  # type: ignore
         if class_count == 0:
             raise ValueError(
                 f"Class '{cls}' has zero samples in {split_csv_path} -- "
@@ -277,7 +277,7 @@ def fit(
         mode = "min" if selection_metric == "val_loss" else "max"
         early_stopper = EarlyStopper(patience=4, mode=mode)
 
-    history = {
+    history: Dict[str, Any] = {
         "train_loss": [], "val_loss": [], "val_accuracy": [],
         "malignant_recall": [], "lr": [],
     }

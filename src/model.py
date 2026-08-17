@@ -109,7 +109,7 @@ class _TransformerHead(nn.Module):
 
         last_layer = self.encoder.layers[-1]
         # need_weights=True, average_attn_weights=True -> [B, seq, seq]
-        _, attn_weights = last_layer.self_attn(
+        _, attn_weights = last_layer.self_attn(  # type: ignore
             tokens, tokens, tokens, need_weights=True, average_attn_weights=True
         )
         patch_attn = attn_weights[:, 0, 1:]  # CLS's attention to the 49 patch tokens

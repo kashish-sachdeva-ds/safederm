@@ -39,3 +39,7 @@ class SkinLesionDataset(Dataset):
 
         label = CLASS_TO_IDX[row["dx"]]
         return image, label
+
+    def get_image_path(self, idx: int) -> Path:
+        row = self.df.iloc[idx]
+        return self.images_dir / f"{row['image_id']}.jpg"

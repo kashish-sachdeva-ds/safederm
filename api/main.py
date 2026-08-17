@@ -14,7 +14,7 @@ import logging
 import os
 import threading
 from contextlib import asynccontextmanager
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 from pathlib import Path
 
 import torch
@@ -94,6 +94,7 @@ async def lifespan(app: FastAPI):
     checkpoint_path = entry["checkpoint_path"]
 
     if checkpoint_path.exists():
+        assert model is not None
         state_dict = torch.load(checkpoint_path, map_location=device, weights_only=True)
         model.load_state_dict(state_dict)
         checkpoint_loaded = True
@@ -106,6 +107,7 @@ async def lifespan(app: FastAPI):
             checkpoint_path, MODEL_VARIANT,
         )
 
+    assert model is not None
     model.to(device)
     model.eval()
     transform = get_eval_transforms()
@@ -133,10 +135,14 @@ async def lifespan(app: FastAPI):
         )
 
     logger.info("Loading Input Safety Gateway model...")
-    gw_model = load_gateway_model(device)
+    gw_model = load_gateway_model(str(device))
 
     logger.info("Loading Feature Bank (Gateway 2)...")
-    feature_bank = load_feature_bank(Path("models"), str(device))
+    try:
+        feature_bank = load_feature_bank(Path("models"), str(device))
+    except FileNotFoundError:
+        logger.warning("feature_bank.pt not found. Gateway 2 will be disabled.")
+        feature_bank = None
 
     yield
     # No shutdown work needed -- nothing external held open (no DB/file handles).
@@ -185,7 +191,8 @@ class HealthResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-def _run_inference(tensor: torch.Tensor) -> dict:
+def _run_inference(tensor: torch.Tensor) -> Dict[str, Any]:
+    assert model is not None
     with _inference_lock:
         if calibration is not None and model_supports_mc_dropout:
             mean_probs, entropy = mc_dropout_predict(
@@ -243,7 +250,8 @@ async def predict(file: UploadFile = File(...)):
         image = Image.open(io.BytesIO(contents)).convert("RGB")
         
         # Gateway Check 1 (Far-OOD): Is it skin?
-        is_skin, skin_score = verify_image_is_skin(
+        is_skin, skin_score = await run_in_threadpool(
+            verify_image_is_skin,
             image, 
             gateway=gw_model, 
             threshold=GATEWAY_THRESHOLD,
@@ -255,23 +263,26 @@ async def predict(file: UploadFile = File(...)):
                 detail="Invalid image detected. Please upload a clear medical photograph of human skin."
             )
 
-        tensor = transform(image).unsqueeze(0).to(device)
+        assert transform is not None
+        tensor = transform(image).unsqueeze(0).to(device)  # type: ignore
         
         # Gateway Check 2 (Near-OOD): Is it dermoscopy quality?
-        emb_fn = resnet_avgpool_embedding_fn if MODEL_VARIANT == "baseline" else champion_embedding_fn
-        is_in_dist, distance = verify_in_distribution(
-            tensor,
-            model,
-            feature_bank,
-            threshold=DEFAULT_DISTANCE_THRESHOLD,
-            embedding_fn=emb_fn
-        )
-        if not is_in_dist:
-            logger.warning(f"Gateway 2 check failed. Image is skin but not in-distribution (distance: {distance:.3f}).")
-            raise HTTPException(
-                status_code=400,
-                detail=f"Image detected as skin but does not match clinical quality (e.g. poor lighting, non-dermoscopic). Distance: {distance:.3f}. Please upload a clear dermoscopy image."
+        if feature_bank is not None:
+            emb_fn = resnet_avgpool_embedding_fn if MODEL_VARIANT == "baseline" else champion_embedding_fn
+            is_in_dist, distance = await run_in_threadpool(
+                verify_in_distribution,
+                tensor,
+                model,
+                feature_bank,
+                threshold=DEFAULT_DISTANCE_THRESHOLD,
+                embedding_fn=emb_fn
             )
+            if not is_in_dist:
+                logger.warning(f"Gateway 2 check failed. Image is skin but not in-distribution (distance: {distance:.3f}).")
+                raise HTTPException(
+                    status_code=400,
+                    detail="Image detected as skin but does not match clinical quality (e.g. poor lighting, non-dermoscopic). Please upload a clear dermoscopy image."
+                )
 
         return await run_in_threadpool(_run_inference, tensor)
     except HTTPException:

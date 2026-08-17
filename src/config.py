@@ -42,7 +42,7 @@ CALIBRATION_ARTIFACT_PATH = MODELS_DIR / "calibration.json"
 BASELINE_METRICS_PATH = MODELS_DIR / "baseline_metrics.json"
 CHAMPION_METRICS_PATH = MODELS_DIR / "champion_metrics.json"
 
-# Gateway Model Threshold (tuned in notebooks/07_gateway_threshold.ipynb)
+# Gateway Model Threshold (tuned in notebooks/09_gateway_threshold_tuning.ipynb)
 # Tuned to 0.85 because max non-skin score was 0.68 and min skin score was 1.0.
 GATEWAY_THRESHOLD = 0.85
 

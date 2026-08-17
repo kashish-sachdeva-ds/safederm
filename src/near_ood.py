@@ -46,7 +46,7 @@ FEATURE_BANK_FILENAME = "feature_bank.pt"
 DEFAULT_K = 5
 # Starting point only — tune against real in-distribution vs known-OOD
 # samples (wood grain, glitter, etc.) the same way src/gateway.py's
-# threshold gets tuned in notebooks/gateway_threshold_tuning.ipynb.
+# threshold gets tuned in notebooks/09_gateway_threshold_tuning.ipynb.
 # NOTE: a threshold tuned on the baseline's embedding space does not
 # transfer to the champion model either — its embeddings live in a
 # different space entirely. Re-tune per architecture, not just per checkpoint.
@@ -73,7 +73,7 @@ def resnet_avgpool_embedding_fn(model: nn.Module, x: torch.Tensor) -> torch.Tens
     def hook(_module, _input, output):
         captured["emb"] = output.flatten(1)
 
-    handle = model.avgpool.register_forward_hook(hook)
+    handle = getattr(model, "avgpool").register_forward_hook(hook)
     with torch.no_grad():
         model(x)
     handle.remove()
