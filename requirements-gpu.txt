@@ -1,0 +1,19 @@
+# Optional: explicit CUDA-build install for training on a GPU box.
+#
+# `requirements.txt` pins plain `torch==2.13.0` / `torchvision==0.28.0`,
+# which resolve on PyPI to whatever build PyPI serves by default for the
+# host platform (CPU-only wheel on most CI runners, CUDA-enabled wheel with
+# bundled nvidia-* deps on a lot of Linux setups — inconsistent enough not
+# to rely on for training).
+#
+# Use this file instead when you specifically want a known CUDA 13.0 build:
+#
+#   pip install -r requirements-gpu.txt --extra-index-url https://download.pytorch.org/whl/cu130
+#
+# The `+cu130` local-version suffix ONLY resolves against that index, not
+# plain PyPI -- that mismatch (pinning `+cu130` in a file installed with
+# plain `pip install -r requirements.txt`) is what broke every fresh clone
+# before this file existed. Do not merge this pin back into requirements.txt.
+
+torch==2.13.0+cu130
+torchvision==0.28.0+cu130
