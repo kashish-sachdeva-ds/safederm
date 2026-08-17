@@ -44,6 +44,7 @@ def test_health_check(client):
     # post-training).
     assert isinstance(data["checkpoint_loaded"], bool)
     assert isinstance(data["calibration_loaded"], bool)
+    assert isinstance(data["feature_bank_loaded"], bool)
     assert data["model_variant"] in ("baseline", "champion")
 
 
@@ -120,3 +121,21 @@ def test_cors_rejects_non_allowlisted_origin(client):
     )
     assert "access-control-allow-origin" not in {k.lower() for k in response.headers.keys()} \
         or response.headers.get("access-control-allow-origin") != "http://not-an-allowed-origin.example.com"
+
+
+def test_predict_succeeds_without_feature_bank(client):
+    """No models/feature_bank_<variant>.pt exists in this test run (none is
+    committed to the repo) -- Gateway 2 must be skipped gracefully, not
+    crash the request or silently report success it didn't perform. This
+    is the live regression test for the old load_feature_bank() crash:
+    if that bug came back, this whole module would fail to collect before
+    this test could even run.
+    """
+    health = client.get("/health").json()
+    assert health["feature_bank_loaded"] is False
+
+    response = client.post(
+        "/predict",
+        files={"file": ("dummy.jpg", _dummy_image_bytes(), "image/jpeg")},
+    )
+    assert response.status_code == 200

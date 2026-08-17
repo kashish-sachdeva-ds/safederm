@@ -16,6 +16,7 @@ the specific architecture and training-recipe decisions.
 import torch
 import torch.nn as nn
 from torchvision import models
+from typing import cast
 
 from src.labels import ALL_CLASSES
 
@@ -107,7 +108,9 @@ class _TransformerHead(nn.Module):
         tokens = torch.cat([cls, tokens], dim=1)
         tokens = tokens + self.pos_embed[:, : tokens.size(1), :]
 
-        last_layer = self.encoder.layers[-1]
+        # nn.ModuleList.__getitem__ types ambiguously (Tensor | Module) even
+        # though this is always a TransformerEncoderLayer at runtime.
+        last_layer = cast(nn.TransformerEncoderLayer, self.encoder.layers[-1])
         # need_weights=True, average_attn_weights=True -> [B, seq, seq]
         _, attn_weights = last_layer.self_attn(  # type: ignore
             tokens, tokens, tokens, need_weights=True, average_attn_weights=True

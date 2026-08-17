@@ -14,11 +14,16 @@ import logging
 import os
 import threading
 from contextlib import asynccontextmanager
+<<<<<<< HEAD
 from typing import Any, Dict, Optional
+=======
+from typing import Dict, Optional, cast
+>>>>>>> ce1e3aa (resolving conflict)
 from pathlib import Path
 
 import torch
 import torch.nn as nn
+from torchvision import transforms as tv_transforms
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
@@ -31,7 +36,14 @@ from src.labels import ALL_CLASSES, risk_group
 from src.model import build_baseline_model, build_champion_model
 from src.transforms import get_eval_transforms
 from src.gateway import load_gateway_model, verify_image_is_skin
-from src.near_ood import load_feature_bank, verify_in_distribution, DEFAULT_DISTANCE_THRESHOLD, resnet_avgpool_embedding_fn, champion_embedding_fn
+from src.near_ood import (
+    load_feature_bank_if_exists,
+    verify_in_distribution,
+    DEFAULT_DISTANCE_THRESHOLD,
+    resnet_avgpool_embedding_fn,
+    champion_embedding_fn,
+    FeatureBank,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -70,12 +82,12 @@ ALLOWED_ORIGINS = [
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 model: Optional[nn.Module] = None
-transform = None
+transform: Optional[tv_transforms.Compose] = None
 checkpoint_loaded = False
 model_supports_mc_dropout = False
 calibration: Optional[CalibrationArtifact] = None
 gw_model = None
-feature_bank = None
+feature_bank: Optional[FeatureBank] = None
 
 _inference_lock = threading.Lock()
 
@@ -90,13 +102,15 @@ async def lifespan(app: FastAPI):
     global gw_model, feature_bank
 
     entry = MODEL_REGISTRY[MODEL_VARIANT]
-    model = entry["build_fn"]()
+    # Local, non-Optional handle -- avoids re-narrowing the Optional[nn.Module]
+    # global on every line below; assigned to the global once at the end.
+    built_model: nn.Module = entry["build_fn"]()
     checkpoint_path = entry["checkpoint_path"]
 
     if checkpoint_path.exists():
         assert model is not None
         state_dict = torch.load(checkpoint_path, map_location=device, weights_only=True)
-        model.load_state_dict(state_dict)
+        built_model.load_state_dict(state_dict)
         checkpoint_loaded = True
         logger.info("Loaded %s checkpoint from %s", MODEL_VARIANT, checkpoint_path)
     else:
@@ -107,11 +121,17 @@ async def lifespan(app: FastAPI):
             checkpoint_path, MODEL_VARIANT,
         )
 
+<<<<<<< HEAD
     assert model is not None
     model.to(device)
     model.eval()
+=======
+    built_model.to(device)
+    built_model.eval()
+    model = built_model
+>>>>>>> ce1e3aa (resolving conflict)
     transform = get_eval_transforms()
-    model_supports_mc_dropout = _model_has_dropout(model)
+    model_supports_mc_dropout = _model_has_dropout(built_model)
 
     calibration = CalibrationArtifact.load_if_exists(CALIBRATION_ARTIFACT_PATH)
     if calibration is None:
@@ -138,11 +158,24 @@ async def lifespan(app: FastAPI):
     gw_model = load_gateway_model(str(device))
 
     logger.info("Loading Feature Bank (Gateway 2)...")
+<<<<<<< HEAD
     try:
         feature_bank = load_feature_bank(Path("models"), str(device))
     except FileNotFoundError:
         logger.warning("feature_bank.pt not found. Gateway 2 will be disabled.")
         feature_bank = None
+=======
+    feature_bank = load_feature_bank_if_exists(Path("models"), str(device), MODEL_VARIANT)
+    if feature_bank is None:
+        logger.warning(
+            "No feature bank found at models/feature_bank_%s.pt -- Gateway 2 "
+            "(near-OOD detection) will be SKIPPED at request time "
+            "(gateway2_checked=false in every response) until "
+            "notebooks/near_ood_feature_bank.ipynb builds one. Gateway 1 "
+            "(BiomedCLIP skin/non-skin check) still runs.",
+            MODEL_VARIANT,
+        )
+>>>>>>> ce1e3aa (resolving conflict)
 
     yield
     # No shutdown work needed -- nothing external held open (no DB/file handles).
@@ -185,13 +218,21 @@ class HealthResponse(BaseModel):
     checkpoint_loaded: bool
     model_variant: str
     calibration_loaded: bool
+    feature_bank_loaded: bool  # False -> Gateway 2 (near-OOD) is skipped at /predict time, not silently passed
 
 # ---------------------------------------------------------------------------
 # Inference
 # ---------------------------------------------------------------------------
 
 
+<<<<<<< HEAD
 def _run_inference(tensor: torch.Tensor) -> Dict[str, Any]:
+=======
+def _run_inference(tensor: torch.Tensor) -> dict:
+    # predict() already guards model is None before dispatching here, but
+    # pyright checks this threadpool-called helper independently and can't
+    # see that caller guarantee across the call boundary.
+>>>>>>> ce1e3aa (resolving conflict)
     assert model is not None
     with _inference_lock:
         if calibration is not None and model_supports_mc_dropout:
@@ -231,9 +272,27 @@ def _run_inference(tensor: torch.Tensor) -> Dict[str, Any]:
         }
 
 
+def _check_gateway1(image: Image.Image) -> tuple[bool, float]:
+    assert gw_model is not None
+    return verify_image_is_skin(image, gateway=gw_model, threshold=GATEWAY_THRESHOLD)
+
+
+def _check_gateway2(tensor: torch.Tensor) -> tuple[bool, float]:
+    assert model is not None
+    assert feature_bank is not None
+    emb_fn = resnet_avgpool_embedding_fn if MODEL_VARIANT == "baseline" else champion_embedding_fn
+    return verify_in_distribution(
+        tensor,
+        model,
+        feature_bank,
+        threshold=DEFAULT_DISTANCE_THRESHOLD,
+        embedding_fn=emb_fn,
+    )
+
+
 @app.post("/predict", response_model=PredictionResponse)
 async def predict(file: UploadFile = File(...)):
-    if model is None or transform is None or gw_model is None or feature_bank is None:
+    if model is None or transform is None or gw_model is None:
         logger.error("Attempted prediction but models are not loaded.")
         raise HTTPException(status_code=500, detail="Models not loaded.")
 
@@ -248,6 +307,7 @@ async def predict(file: UploadFile = File(...)):
 
     try:
         image = Image.open(io.BytesIO(contents)).convert("RGB")
+<<<<<<< HEAD
         
         # Gateway Check 1 (Far-OOD): Is it skin?
         is_skin, skin_score = await run_in_threadpool(
@@ -276,12 +336,46 @@ async def predict(file: UploadFile = File(...)):
                 feature_bank,
                 threshold=DEFAULT_DISTANCE_THRESHOLD,
                 embedding_fn=emb_fn
+=======
+
+        # Gateway Check 1 (Far-OOD): Is it skin? Model call, so it belongs
+        # in the threadpool same as inference -- it was blocking the event
+        # loop before.
+        is_skin, skin_score = await run_in_threadpool(_check_gateway1, image)
+        if not is_skin:
+            logger.warning("Gateway 1 check failed (skin_score=%.3f).", skin_score)
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid image detected. Please upload a clear medical photograph of human skin.",
+>>>>>>> ce1e3aa (resolving conflict)
             )
             if not is_in_dist:
                 logger.warning(f"Gateway 2 check failed. Image is skin but not in-distribution (distance: {distance:.3f}).")
                 raise HTTPException(
                     status_code=400,
                     detail="Image detected as skin but does not match clinical quality (e.g. poor lighting, non-dermoscopic). Please upload a clear dermoscopy image."
+                )
+
+        assert transform is not None  # guarded by the is-None check above; pyright can't see across the await
+        # Compose.__call__ is typed generically (returns the same type as
+        # its input) in torchvision's stubs, since it can't statically know
+        # a ToTensor step is inside -- cast() reflects the real runtime type.
+        tensor = cast(torch.Tensor, transform(image)).unsqueeze(0).to(device)
+
+        # Gateway Check 2 (Near-OOD): Is it dermoscopy quality? Skipped
+        # gracefully (not silently passed) if no feature bank has been
+        # built yet for this model variant.
+        if feature_bank is not None:
+            is_in_dist, distance = await run_in_threadpool(_check_gateway2, tensor)
+            if not is_in_dist:
+                # Distance is logged server-side only -- it's an internal
+                # detection-threshold detail, not something a client needs
+                # (or should be able to use to probe the threshold).
+                logger.warning("Gateway 2 check failed (distance=%.3f).", distance)
+                raise HTTPException(
+                    status_code=400,
+                    detail="Image detected as skin but does not match clinical quality "
+                    "(e.g. poor lighting, non-dermoscopic). Please upload a clear dermoscopy image.",
                 )
 
         return await run_in_threadpool(_run_inference, tensor)
@@ -303,4 +397,5 @@ def health_check():
         checkpoint_loaded=checkpoint_loaded,
         model_variant=MODEL_VARIANT,
         calibration_loaded=calibration is not None and model_supports_mc_dropout,
+        feature_bank_loaded=feature_bank is not None,
     )

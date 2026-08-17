@@ -330,6 +330,8 @@ def fit(
             )
             break
 
-    history["stopped_epoch"] = final_epoch
-    history["best_epoch"] = early_stopper.best_epoch
-    return history
+    # Separate return dict instead of stuffing scalars into `history` --
+    # history is dict[str, list[float]]; mixing in int fields under the
+    # same name was the type error here (and just moving to `dict[str, Any]`
+    # would only push the error to every .append() call instead).
+    return {**history, "stopped_epoch": final_epoch, "best_epoch": early_stopper.best_epoch}
