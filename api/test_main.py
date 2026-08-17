@@ -7,6 +7,8 @@ from PIL import Image
 from api.main import app
 
 
+from unittest.mock import patch
+
 @pytest.fixture(scope="module")
 def client():
     """One TestClient (and one model-loading lifespan run) shared across
@@ -14,8 +16,10 @@ def client():
     its own -- previously every test re-triggered startup, which now
     means re-constructing a full ResNet-50 each time.
     """
-    with TestClient(app) as c:
-        yield c
+    with patch("api.main.verify_image_is_skin", return_value=(True, 0.99)), \
+         patch("api.main.verify_in_distribution", return_value=(True, 0.5)):
+        with TestClient(app) as c:
+            yield c
 
 
 def _dummy_image_bytes() -> bytes:
