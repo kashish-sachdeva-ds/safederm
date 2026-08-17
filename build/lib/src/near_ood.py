@@ -51,7 +51,6 @@ DEFAULT_K = 5
 # transfer to the champion model either — its embeddings live in a
 # different space entirely. Re-tune per architecture, not just per checkpoint.
 DEFAULT_DISTANCE_THRESHOLD = 1.20
-DEFAULT_DISTANCE_THRESHOLD_CHAMPION = 0.50
 
 EmbeddingFn = Callable[[nn.Module, torch.Tensor], torch.Tensor]
 
@@ -104,17 +103,13 @@ def champion_embedding_fn(model: nn.Module, x: torch.Tensor) -> torch.Tensor:
     notebooks/near_ood_feature_bank.ipynb against the champion checkpoint
     to rebuild the feature bank and re-tune the distance threshold —
     neither carries over from the baseline."""
-    embeddings = []
-    def hook(module, input, output):
-        embeddings.append(output)
-    
-    handle = model.transformer_head.norm.register_forward_hook(hook)
-    try:
-        model(x)
-    finally:
-        handle.remove()
-        
-    return embeddings[0]
+    raise NotImplementedError(
+        "champion_embedding_fn is not implemented yet — see docstring. "
+        "Do not fall back to resnet_avgpool_embedding_fn for the champion "
+        "model; it will raise AttributeError (no avgpool module) or, worse, "
+        "silently succeed on some other unrelated attribute and produce "
+        "meaningless distances."
+    )
 
 
 @torch.no_grad()
@@ -154,12 +149,10 @@ def save_feature_bank(bank: FeatureBank, models_dir: Path) -> Path:
 
 def load_feature_bank_if_exists(models_dir: Path, device: str, variant: str = "baseline") -> FeatureBank | None:
     path = models_dir / f"feature_bank_{variant}.pt"
-    # For backward compatibility, if variant is baseline we also check the un-suffixed name
-    if not path.exists() and variant == "baseline":
-        path = models_dir / FEATURE_BANK_FILENAME
-    
     if not path.exists():
-        return None
+        path = models_dir / FEATURE_BANK_FILENAME  # Fallback to feature_bank.pt
+        if not path.exists():
+            return None
     data = torch.load(path, map_location=device, weights_only=False)
     return FeatureBank(embeddings=data["embeddings"].to(device), device=device)
 

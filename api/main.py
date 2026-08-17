@@ -36,6 +36,7 @@ from src.near_ood import (
     load_feature_bank_if_exists,
     verify_in_distribution,
     DEFAULT_DISTANCE_THRESHOLD,
+    DEFAULT_DISTANCE_THRESHOLD_CHAMPION,
     resnet_avgpool_embedding_fn,
     champion_embedding_fn,
     FeatureBank,
@@ -254,7 +255,7 @@ def _check_gateway1(image: Image.Image) -> tuple[bool, float]:
     return verify_image_is_skin(image, gateway=gw_model, threshold=GATEWAY_THRESHOLD)
 
 
-def _check_gateway2(tensor: torch.Tensor) -> tuple[bool, float]:
+def _check_gateway2(tensor: torch.Tensor, threshold: float = None) -> tuple[bool, float]:
     assert model is not None
     assert feature_bank is not None
     emb_fn = resnet_avgpool_embedding_fn if MODEL_VARIANT == "baseline" else champion_embedding_fn
@@ -262,7 +263,7 @@ def _check_gateway2(tensor: torch.Tensor) -> tuple[bool, float]:
         tensor,
         model,
         feature_bank,
-        threshold=DEFAULT_DISTANCE_THRESHOLD,
+        threshold=threshold,
         embedding_fn=emb_fn,
     )
 
@@ -306,7 +307,8 @@ async def predict(file: UploadFile = File(...)):
         # gracefully (not silently passed) if no feature bank has been
         # built yet for this model variant.
         if feature_bank is not None:
-            is_in_dist, distance = await run_in_threadpool(_check_gateway2, tensor)
+            threshold_val = DEFAULT_DISTANCE_THRESHOLD if MODEL_VARIANT == "baseline" else DEFAULT_DISTANCE_THRESHOLD_CHAMPION
+            is_in_dist, distance = await run_in_threadpool(_check_gateway2, tensor, threshold=threshold_val)
             if not is_in_dist:
                 # Distance is logged server-side only -- it's an internal
                 # detection-threshold detail, not something a client needs
@@ -314,8 +316,10 @@ async def predict(file: UploadFile = File(...)):
                 logger.warning("Gateway 2 check failed (distance=%.3f).", distance)
                 raise HTTPException(
                     status_code=400,
-                    detail="Image detected as skin but does not match clinical quality "
-                    "(e.g. poor lighting, non-dermoscopic). Please upload a clear dermoscopy image.",
+                    detail="Image rejected by Safety Gateway: The image does not match the visual profile "
+                    "of the lesions this AI is trained to analyze. This could be because it is not a proper "
+                    "dermoscopy image, it is perfectly clear skin without a lesion, or it is an unsupported rare "
+                    "skin condition. Please have this case reviewed manually by a clinician.",
                 )
 
         return await run_in_threadpool(_run_inference, tensor)

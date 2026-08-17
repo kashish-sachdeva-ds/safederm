@@ -36,8 +36,6 @@ NON_SKIN_PROMPTS = [
     "a photograph of a random object, scenery, animal, or person",
     "a photo of an everyday object or landscape",
     "a picture unrelated to skin or dermatology",
-    "a close-up photograph of a non-human texture like wood, leather, or cracked earth",
-    "a close-up macro photograph of an inanimate object or material",
 ]
 
 from src.config import GATEWAY_THRESHOLD
