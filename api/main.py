@@ -14,11 +14,7 @@ import logging
 import os
 import threading
 from contextlib import asynccontextmanager
-<<<<<<< HEAD
-from typing import Any, Dict, Optional
-=======
-from typing import Dict, Optional, cast
->>>>>>> ce1e3aa (resolving conflict)
+from typing import Any, Dict, Optional, cast
 from pathlib import Path
 
 import torch
@@ -108,7 +104,6 @@ async def lifespan(app: FastAPI):
     checkpoint_path = entry["checkpoint_path"]
 
     if checkpoint_path.exists():
-        assert model is not None
         state_dict = torch.load(checkpoint_path, map_location=device, weights_only=True)
         built_model.load_state_dict(state_dict)
         checkpoint_loaded = True
@@ -121,15 +116,9 @@ async def lifespan(app: FastAPI):
             checkpoint_path, MODEL_VARIANT,
         )
 
-<<<<<<< HEAD
-    assert model is not None
-    model.to(device)
-    model.eval()
-=======
     built_model.to(device)
     built_model.eval()
     model = built_model
->>>>>>> ce1e3aa (resolving conflict)
     transform = get_eval_transforms()
     model_supports_mc_dropout = _model_has_dropout(built_model)
 
@@ -158,13 +147,6 @@ async def lifespan(app: FastAPI):
     gw_model = load_gateway_model(str(device))
 
     logger.info("Loading Feature Bank (Gateway 2)...")
-<<<<<<< HEAD
-    try:
-        feature_bank = load_feature_bank(Path("models"), str(device))
-    except FileNotFoundError:
-        logger.warning("feature_bank.pt not found. Gateway 2 will be disabled.")
-        feature_bank = None
-=======
     feature_bank = load_feature_bank_if_exists(Path("models"), str(device), MODEL_VARIANT)
     if feature_bank is None:
         logger.warning(
@@ -175,7 +157,6 @@ async def lifespan(app: FastAPI):
             "(BiomedCLIP skin/non-skin check) still runs.",
             MODEL_VARIANT,
         )
->>>>>>> ce1e3aa (resolving conflict)
 
     yield
     # No shutdown work needed -- nothing external held open (no DB/file handles).
@@ -225,14 +206,10 @@ class HealthResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-<<<<<<< HEAD
 def _run_inference(tensor: torch.Tensor) -> Dict[str, Any]:
-=======
-def _run_inference(tensor: torch.Tensor) -> dict:
     # predict() already guards model is None before dispatching here, but
     # pyright checks this threadpool-called helper independently and can't
     # see that caller guarantee across the call boundary.
->>>>>>> ce1e3aa (resolving conflict)
     assert model is not None
     with _inference_lock:
         if calibration is not None and model_supports_mc_dropout:
@@ -307,37 +284,6 @@ async def predict(file: UploadFile = File(...)):
 
     try:
         image = Image.open(io.BytesIO(contents)).convert("RGB")
-<<<<<<< HEAD
-        
-        # Gateway Check 1 (Far-OOD): Is it skin?
-        is_skin, skin_score = await run_in_threadpool(
-            verify_image_is_skin,
-            image, 
-            gateway=gw_model, 
-            threshold=GATEWAY_THRESHOLD,
-        )
-        if not is_skin:
-            logger.warning("Gateway 1 check failed. Image is likely out-of-distribution (non-skin).")
-            raise HTTPException(
-                status_code=400, 
-                detail="Invalid image detected. Please upload a clear medical photograph of human skin."
-            )
-
-        assert transform is not None
-        tensor = transform(image).unsqueeze(0).to(device)  # type: ignore
-        
-        # Gateway Check 2 (Near-OOD): Is it dermoscopy quality?
-        if feature_bank is not None:
-            emb_fn = resnet_avgpool_embedding_fn if MODEL_VARIANT == "baseline" else champion_embedding_fn
-            is_in_dist, distance = await run_in_threadpool(
-                verify_in_distribution,
-                tensor,
-                model,
-                feature_bank,
-                threshold=DEFAULT_DISTANCE_THRESHOLD,
-                embedding_fn=emb_fn
-=======
-
         # Gateway Check 1 (Far-OOD): Is it skin? Model call, so it belongs
         # in the threadpool same as inference -- it was blocking the event
         # loop before.
@@ -347,14 +293,8 @@ async def predict(file: UploadFile = File(...)):
             raise HTTPException(
                 status_code=400,
                 detail="Invalid image detected. Please upload a clear medical photograph of human skin.",
->>>>>>> ce1e3aa (resolving conflict)
             )
-            if not is_in_dist:
-                logger.warning(f"Gateway 2 check failed. Image is skin but not in-distribution (distance: {distance:.3f}).")
-                raise HTTPException(
-                    status_code=400,
-                    detail="Image detected as skin but does not match clinical quality (e.g. poor lighting, non-dermoscopic). Please upload a clear dermoscopy image."
-                )
+
 
         assert transform is not None  # guarded by the is-None check above; pyright can't see across the await
         # Compose.__call__ is typed generically (returns the same type as
