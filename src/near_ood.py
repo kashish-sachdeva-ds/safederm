@@ -184,7 +184,11 @@ def knn_distance(
     image_tensor = image_tensor.to(bank.device)
 
     query_emb = _get_embedding(model, image_tensor, embedding_fn)  # (1, D)
-    dists = torch.cdist(query_emb, bank.embeddings)  # (1, N)
+    bank_embeddings = bank.embeddings.to(
+        device=query_emb.device,
+        dtype=query_emb.dtype
+    )
+    dists = torch.cdist(query_emb, bank_embeddings)  # (1, N)
     kth_dist = dists.topk(k, largest=False).values[0, -1]
     return kth_dist.item()
 
