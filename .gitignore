@@ -19,3 +19,5 @@ BRAIN.md
 
 # Guides
 fastapi_guide.md
+
+*.egg-info
