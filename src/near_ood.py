@@ -108,7 +108,8 @@ def champion_embedding_fn(model: nn.Module, x: torch.Tensor) -> torch.Tensor:
     def hook(module, input, output):
         embeddings.append(output)
     
-    handle = model.transformer_head.norm.register_forward_hook(hook)
+    head = getattr(model, "transformer_head")
+    handle = getattr(head, "norm").register_forward_hook(hook)
     try:
         model(x)
     finally:

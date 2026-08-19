@@ -29,8 +29,8 @@ class SkinLesionDataset(Dataset):
     def __len__(self) -> int:
         return len(self.df)
 
-    def __getitem__(self, idx: int):
-        row = self.df.iloc[idx]
+    def __getitem__(self, index: int):
+        row = self.df.iloc[index]
         img_path = self.images_dir / f"{row['image_id']}.jpg"
         image = Image.open(img_path).convert("RGB")
 

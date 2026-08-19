@@ -5,6 +5,9 @@ Import from here instead of hardcoding paths -- keeps every notebook working
 regardless of who runs it or where the repo is cloned.
 """
 
+import os
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+
 from pathlib import Path
 
 # Repo root -- two levels up from this file (src/config.py -> src/ -> root)
@@ -43,8 +46,8 @@ BASELINE_METRICS_PATH = MODELS_DIR / "baseline_metrics.json"
 CHAMPION_METRICS_PATH = MODELS_DIR / "champion_metrics.json"
 
 # Gateway Model Threshold (tuned in notebooks/09_gateway_threshold_tuning.ipynb)
-# Tuned to 0.85 because max non-skin score was 0.68 and min skin score was 1.0.
-GATEWAY_THRESHOLD = 0.85
+# Tuned to 0.76 to cleanly separate real skin images from the updated OOD non-skin dataset
+GATEWAY_THRESHOLD = 0.76
 
 # Sanity-check constants used by 01_data_extraction.ipynb
 EXPECTED_IMAGE_COUNT = 10015
